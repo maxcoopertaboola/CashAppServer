@@ -1,0 +1,4 @@
+<manifest projecttype="ACCOUNTCUSTOMIZATION">
+  <projectname>Check PO Remaining</projectname>
+  <frameworkversion>1.0</frameworkversion>
+</manifest>
