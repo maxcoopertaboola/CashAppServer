@@ -505,20 +505,28 @@ function(log, config, search, record, https, cashAppCommon, tblaCashAppCommon) {
         const resolvedMemos = tblaCashAppCommon.setPaymentMemos(paymentRec, cashAppTransactionId, matches, pluginData)
         log.debug(fn, `[MEMO TRACE] After setPaymentMemos: memo on rec = "${paymentRec.getValue({fieldId:'memo'})}", resolvedMemos = ${JSON.stringify(resolvedMemos)}`)
 
-        // If customer's custentitytb_actual_pay_term = 27, create a deposit instead
+        // If customer's custentitytb_actual_pay_term = 27, create a deposit instead.
+        // Gated by the bank's CashApp Setup checkbox `custrecord_tb_auto_create_prepay_deposit`:
+        // when unchecked we fall through to the standard Customer Payment so the MR script
+        // never silently creates a Customer Deposit.
         const customerPayTerm = search.lookupFields({
             type:'customer',
             id:fields.customer,
             columns:['custentitytb_actual_pay_term']
         })?.custentitytb_actual_pay_term ?? ''
-        if (customerPayTerm.toString() === '27' || [27,'27'].includes(customerPayTerm?.[0]?.value)) {
-            if (resolvedMemos.customMemo) {
-                fields.memo = resolvedMemos.customMemo
-                fields.customMemo = resolvedMemos.customMemo
-            } else if (resolvedMemos.memo) {
-                fields.memo = resolvedMemos.memo
+        const isPrepayCustomer = customerPayTerm.toString() === '27' || [27,'27'].includes(customerPayTerm?.[0]?.value)
+        if (isPrepayCustomer) {
+            const autoCreateDeposit = tblaCashAppCommon.shouldAutoCreatePrepayDeposit(pluginData)
+            log.audit(fn, `Prepay customer ${fields.customer} detected. autoCreateDeposit=${autoCreateDeposit}`)
+            if (autoCreateDeposit) {
+                if (resolvedMemos.customMemo) {
+                    fields.memo = resolvedMemos.customMemo
+                    fields.customMemo = resolvedMemos.customMemo
+                } else if (resolvedMemos.memo) {
+                    fields.memo = resolvedMemos.memo
+                }
+                return tblaCashAppCommon.createCustomerDeposit(batchId, cashAppTransactionId, fields, pluginData)
             }
-            return tblaCashAppCommon.createCustomerDeposit(batchId, cashAppTransactionId, fields, pluginData)
         }
         
         return true

@@ -570,8 +570,14 @@ define([
 
             const issues = lookup.custrecord_pri_cashapp_trans_matchissues
             if (issues && issues.length > 0) {
-                const issueTexts = issues.map(function(i) { return i.text || i.value }).join(', ')
-                warnings.push(`Match issues: ${issueTexts}`)
+                const filteredIssues = issues.filter(function(i) {
+                    const issueValue = i && typeof i === 'object' ? i.value : i
+                    return issueValue !== cashApp.MATCH_ISSUE.NO_MATCH_FOUND
+                })
+                if (filteredIssues.length > 0) {
+                    const issueTexts = filteredIssues.map(function(i) { return i.text || i.value }).join(', ')
+                    warnings.push(`Match issues: ${issueTexts}`)
+                }
             }
         } catch (err) {
             log.error(fn, `Post-operation state check failed: ${err.message}`)
@@ -1034,9 +1040,12 @@ define([
         record.submitFields({
             type: 'customrecord_pri_cashapp_transaction',
             id: cashAppTransactionId,
-            values: { custrecord_pri_cashapp_suggested_cust: customerId }
+            values: {
+                custrecord_pri_cashapp_suggested_cust: customerId,
+                custrecord_pri_cashapp_trans_customer: customerId
+            }
         })
-        log.debug(fn, `Updated suggested customer to ${customerId} on transaction ${cashAppTransactionId}`)
+        log.debug(fn, `Updated suggested customer and customer to ${customerId} on transaction ${cashAppTransactionId}`)
 
         const whtContext = lookupWhtContextForTransaction(cashAppTransactionId)
 
@@ -1371,6 +1380,20 @@ define([
         const postWarnings = getPostOperationWarnings(cashAppTranId)
         warnings.push.apply(warnings, postWarnings)
 
+        let isZeroed = false
+        try {
+            const voidLookup = search.lookupFields({
+                type: 'customrecord_pri_cashapp_transaction',
+                id: cashAppTranId,
+                columns: ['custrecord_pri_cashapp_trans_amount']
+            })
+            isZeroed = parseFloat(voidLookup.custrecord_pri_cashapp_trans_amount) === 0
+        } catch (lookupErr) {
+            log.error(fn, `Post-void amount check failed: ${lookupErr.message}`)
+        }
+
+        const voided = isZeroed
+
         if (warnings.length) {
             log.error(fn, `voidCashAppTransaction ${cashAppTranId} completed with warnings: ${JSON.stringify(warnings)}`)
         } else {
@@ -1379,11 +1402,13 @@ define([
 
         return {
             cashAppTranId: parseInt(cashAppTranId),
-            voided:        warnings.length === 0,
+            voided:        voided,
             warnings:      warnings.length > 0 ? warnings : undefined,
-            message:       warnings.length > 0
-                ? 'Cash App Transaction void completed with warnings'
-                : 'Cash App Transaction and associated payments voided successfully'
+            message:       !voided
+                ? 'Cash App Transaction void failed'
+                : warnings.length > 0
+                    ? 'Cash App Transaction void completed with warnings'
+                    : 'Cash App Transaction and associated payments voided successfully'
         }
     }
 

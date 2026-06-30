@@ -822,6 +822,46 @@ define([
         return [null, null]
     }
 
+    /**
+     * Whether the bank's Cash App Setup record allows auto-creating a Customer
+     * Deposit (instead of a Customer Payment) when a customer's
+     * `custentitytb_actual_pay_term` flags them as a prepayment customer.
+     *
+     * Driven by the checkbox `custrecord_tb_auto_create_prepay_deposit` on
+     * `customrecord_pri_cashapp_setup`. When the field is unchecked (default
+     * for legacy setups) the plugin must fall back to the standard Customer
+     * Payment flow so the MR script does not silently create deposits.
+     *
+     * @param {Object} pluginData - The pluginData object received in plugin hooks.
+     *   Expected to contain `configId` (the setup record id), which is set by
+     *   PRI_CashApp_Common.getPlugin.
+     * @returns {boolean} `true` only when the setup record has the field
+     *   explicitly checked. Returns `false` on any lookup failure so we err on
+     *   the side of NOT auto-creating deposits.
+     */
+    function shouldAutoCreatePrepayDeposit(pluginData) {
+        const fn = `${scriptName}.shouldAutoCreatePrepayDeposit`
+        const configId = pluginData?.configId
+        if (!configId) {
+            log.debug(fn, 'No configId on pluginData; defaulting to false')
+            return false
+        }
+        try {
+            const lookup = search.lookupFields({
+                type: 'customrecord_pri_cashapp_setup',
+                id: configId,
+                columns: ['custrecord_tb_auto_create_prepay_deposit']
+            })
+            const raw = lookup?.custrecord_tb_auto_create_prepay_deposit
+            const enabled = raw === true || raw === 'T' || raw === 't' || raw === '1' || raw === 1
+            log.debug(fn, { configId, raw, enabled })
+            return enabled
+        } catch (err) {
+            log.error(fn, `Failed to read custrecord_tb_auto_create_prepay_deposit on setup ${configId}. ${err.message}`)
+            return false
+        }
+    }
+
     function createCustomerDeposit(batchId, cashAppTranId, fields, pluginData) {
         const fn = `${scriptName}.createCustomerDeposit`,
             { date, subsidiary, customer, location, amount = 0, paymentMethod, memo, checkNumber = '', invoice = '' } = fields
@@ -1577,6 +1617,7 @@ define([
         queryOpenTransactionsByClientName,
         createWriteOffJE,
         createCustomerDeposit,
+        shouldAutoCreatePrepayDeposit,
         createCurrencyNettingPayment,
         createIndiaWHTPayment,
         processIndiaWHTPayments,
